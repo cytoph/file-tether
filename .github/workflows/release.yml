@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    strategy:
+      matrix:
+        include:
+          - rid: win-x64
+            os: windows-latest
+            binary: file-tether.exe
+            asset: file-tether-win-x64.exe
+          - rid: linux-x64
+            os: ubuntu-latest
+            binary: file-tether
+            asset: file-tether-linux-x64
+          - rid: osx-x64
+            os: macos-latest
+            binary: file-tether
+            asset: file-tether-osx-x64
+          - rid: osx-arm64
+            os: macos-latest
+            binary: file-tether
+            asset: file-tether-osx-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Publish
+        run: dotnet publish src/FileTether.Cli --configuration Release --runtime ${{ matrix.rid }} --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true --output publish
+      - name: Rename asset
+        shell: bash
+        run: mv "publish/${{ matrix.binary }}" "publish/${{ matrix.asset }}"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: publish/${{ matrix.asset }}
