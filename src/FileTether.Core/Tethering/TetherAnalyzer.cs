@@ -50,12 +50,12 @@ public sealed class TetherAnalyzer
 
     public async Task<List<EntryReport>> CheckAsync(IReadOnlyList<TetherEntry> entries, CancellationToken cancellationToken = default)
     {
-        Dictionary<string, string> versionCache = [];
+        Dictionary<string, Result<string>> latestVersions = await LookUpLatestVersionsAsync(entries, cancellationToken);
         List<EntryReport> reports = [];
 
         foreach (TetherEntry entry in entries)
         {
-            EntryReport report = await CheckEntryAsync(entry, versionCache, cancellationToken);
+            EntryReport report = CheckEntry(entry, latestVersions[entry.VersionCacheKey]);
 
             reports.Add(report);
         }
@@ -63,11 +63,9 @@ public sealed class TetherAnalyzer
         return reports;
     }
 
-    private async Task<EntryReport> CheckEntryAsync(TetherEntry entry, Dictionary<string, string> versionCache, CancellationToken cancellationToken)
+    private EntryReport CheckEntry(TetherEntry entry, Result<string> versionResult)
     {
         StateEntry? stateEntry = _session.State.Entries.GetValueOrDefault(entry.Identity);
-
-        Result<string> versionResult = await GetLatestVersionCachedAsync(entry, versionCache, cancellationToken);
 
         if (!versionResult.Success)
         {
@@ -113,25 +111,36 @@ public sealed class TetherAnalyzer
         };
     }
 
-    private async Task<Result<string>> GetLatestVersionCachedAsync(TetherEntry entry, Dictionary<string, string> versionCache, CancellationToken cancellationToken)
+    private async Task<Dictionary<string, Result<string>>> LookUpLatestVersionsAsync(IReadOnlyList<TetherEntry> entries, CancellationToken cancellationToken)
     {
-        if (!versionCache.TryGetValue(entry.VersionCacheKey, out string? versionRef))
+        Dictionary<string, TetherEntry> distinctSources = [];
+
+        foreach (TetherEntry entry in entries)
         {
-            IFileProvider provider = _providerRegistry.Resolve(entry.ProviderType);
-            Result<RemoteVersion> versionResult = await provider.GetLatestVersionAsync(entry, cancellationToken);
-
-            if (!versionResult.Success)
-            {
-                return Result.Fail<string>(versionResult.Message);
-            }
-
-            versionRef = versionResult.Value.VersionRef;
-            versionCache[entry.VersionCacheKey] = versionRef;
-
-            _logger.LogDebug("Latest version for {CacheKey}: {VersionRef}", entry.VersionCacheKey, versionRef);
+            distinctSources.TryAdd(entry.VersionCacheKey, entry);
         }
 
-        return versionRef;
+        List<Task<KeyValuePair<string, Result<string>>>> lookups = [.. distinctSources.Select(source => LookUpLatestVersionAsync(source.Key, source.Value, cancellationToken))];
+        KeyValuePair<string, Result<string>>[] results = await Task.WhenAll(lookups);
+
+        return new Dictionary<string, Result<string>>(results);
+    }
+
+    private async Task<KeyValuePair<string, Result<string>>> LookUpLatestVersionAsync(string cacheKey, TetherEntry entry, CancellationToken cancellationToken)
+    {
+        IFileProvider provider = _providerRegistry.Resolve(entry.ProviderType);
+        Result<RemoteVersion> versionResult = await provider.GetLatestVersionAsync(entry, cancellationToken);
+
+        if (!versionResult.Success)
+        {
+            return new KeyValuePair<string, Result<string>>(cacheKey, Result.Fail<string>(versionResult.Message));
+        }
+
+        string versionRef = versionResult.Value.VersionRef;
+
+        _logger.LogDebug("Latest version for {CacheKey}: {VersionRef}", cacheKey, versionRef);
+
+        return new KeyValuePair<string, Result<string>>(cacheKey, Result.Ok(versionRef));
     }
 
     private bool IsLocallyModified(TetherEntry entry, StateEntry stateEntry)

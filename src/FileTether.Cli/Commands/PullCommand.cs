@@ -51,7 +51,8 @@ public sealed class PullCommand
             return ExitCodes.ConfigError;
         }
 
-        List<EntryReport> reports = await _analyzer.CheckAsync(entries, cancellationToken);
+        string checkingMessage = $"Checking {entries.Count} {(entries.Count == 1 ? "tether" : "tethers")}...";
+        List<EntryReport> reports = await _renderer.WithSpinnerAsync(checkingMessage, () => _analyzer.CheckAsync(entries, cancellationToken));
 
         bool errors = reports.Any(report => report.State == EntryState.Error);
 

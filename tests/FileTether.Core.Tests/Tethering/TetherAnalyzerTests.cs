@@ -244,6 +244,34 @@ public sealed class TetherAnalyzerTests : IDisposable
         await _provider.Received(1).GetLatestVersionAsync(Arg.Any<TetherEntry>(), Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task CheckAsync_TwoEntriesDistinctSources_LooksUpVersionsInParallel()
+    {
+        // Arrange
+        LoadEmptyState();
+        int startedLookups = 0;
+        TaskCompletionSource bothStarted = new();
+        _provider.GetLatestVersionAsync(Arg.Any<TetherEntry>(), Arg.Any<CancellationToken>())
+            .Returns(async callInfo =>
+            {
+                if (Interlocked.Increment(ref startedLookups) == 2)
+                {
+                    bothStarted.SetResult();
+                }
+
+                // sequential lookups would let the first call time out here instead of ever starting the second
+                await bothStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+                return Result.Ok(new RemoteVersion { VersionRef = "v1" });
+            });
+
+        // Act
+        List<EntryReport> reports = await _engine.CheckAsync([Entry("a.md"), Entry("b.md")]);
+
+        // Assert
+        reports.Should().OnlyContain(report => report.State == EntryState.New);
+    }
+
     #endregion // CheckAsync
 
     #region Status

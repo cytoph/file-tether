@@ -220,6 +220,11 @@ public sealed class ConsoleRenderer
         _console.MarkupLine(Markup.Escape(text));
     }
 
+    public Task<TResult> WithSpinnerAsync<TResult>(string message, Func<Task<TResult>> action)
+    {
+        return _console.Status().StartAsync(Markup.Escape(message), _ => action());
+    }
+
     #endregion // Generic rendering
 
     #region Helpers
