@@ -2,6 +2,7 @@ using ConsoleAppFramework;
 using FileTether.Cli.Commands;
 using FileTether.Core;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Serilog;
 using Serilog.Core;
 using Serilog.Events;
@@ -12,9 +13,6 @@ namespace FileTether.Cli;
 
 public static class Program
 {
-    // Not hosted via Host.CreateApplicationBuilder: ConfigureGlobalOptions makes ConsoleAppFramework
-    // rebuild its service provider at run time from the builder's own registrations, silently
-    // discarding a host-built provider (Cysharp/ConsoleAppFramework, still present in 5.7.13).
     private static readonly LoggingLevelSwitch s_levelSwitch = new(LogEventLevel.Warning);
 
     public static async Task<int> Main(string[] args)
@@ -27,9 +25,23 @@ public static class Program
 
         try
         {
-            ConsoleApp.ConsoleAppBuilder app = ConsoleApp.Create();
+            HostApplicationBuilder builder = Host.CreateApplicationBuilder();
 
-            app.ConfigureServices(RegisterServices);
+            builder.Services.AddSingleton(s_levelSwitch);
+            builder.Services.AddSerilog((serviceProvider, configuration) =>
+            {
+                configuration
+                    .MinimumLevel.ControlledBy(s_levelSwitch)
+                    .ReadFrom.Services(serviceProvider)
+                    .Enrich.FromLogContext()
+                    .WriteTo.Spectre();
+            });
+
+            builder.Services.AddFileTetherCore();
+            builder.Services.AddSingleton(AnsiConsole.Console);
+            builder.Services.AddSingleton<ConsoleRenderer>();
+
+            ConsoleApp.ConsoleAppBuilder app = builder.ToConsoleAppBuilder();
 
             app.ConfigureGlobalOptions((ref globalOptionsBuilder) =>
             {
@@ -57,22 +69,5 @@ public static class Program
         {
             await Log.CloseAndFlushAsync();
         }
-    }
-
-    private static void RegisterServices(IServiceCollection services)
-    {
-        services.AddSingleton(s_levelSwitch);
-        services.AddSerilog((serviceProvider, configuration) =>
-        {
-            configuration
-                .MinimumLevel.ControlledBy(s_levelSwitch)
-                .ReadFrom.Services(serviceProvider)
-                .Enrich.FromLogContext()
-                .WriteTo.Spectre();
-        });
-
-        services.AddFileTetherCore();
-        services.AddSingleton(AnsiConsole.Console);
-        services.AddSingleton<ConsoleRenderer>();
     }
 }
